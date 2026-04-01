@@ -24,40 +24,42 @@ public class BookingService {
     };
 
     public void book(Booking b, String serverId) {
-        // 1. Lưu DB của mình
+
         repository.save(b);
 
-        // 2. Log
-        logs.add("Server " + serverId + " nhận booking: " + b.getName());
+        String logMsg = "Server " + serverId + " nhận booking: " + b.getName();
+        logs.add(logMsg);
 
-        // 3. Gửi sang server khác (Chỉ gửi nếu chưa được replicate)
-        // Đây là khúc sửa theo ảnh "Sửa book()"
         if (!b.isReplicated()) {
-            b.setReplicated(true); // Đánh dấu đã replicate để không lặp lại
+            b.setReplicated(true);
 
             RestTemplate restTemplate = new RestTemplate();
+
             for (String url : otherServers) {
                 try {
-                    restTemplate.postForObject(
-                            url + "/api/replicate",
-                            b,
-                            String.class);
+                    // replicate data
+                    restTemplate.postForObject(url + "/api/replicate", b, String.class);
+
+                    // replicate log
+                    restTemplate.postForObject(url + "/api/replicate-log", logMsg, String.class);
+
                 } catch (Exception e) {
-                    System.out.println("Không gửi được tới " + url + ": " + e.getMessage());
+                    logs.add("❌ Không gửi được tới " + url);
                 }
             }
         }
     }
 
     public void replicate(Booking b, String serverId) {
-        // Đây là khúc sửa theo ảnh "Sửa replicate()"
         b.setReplicated(true);
         repository.save(b);
-
-        logs.add("Server " + serverId + " nhận từ server khác: " + b.getName());
     }
 
     public List<String> getLogs() {
         return logs;
+    }
+
+    public void addLog(String log) {
+        logs.add(log);
     }
 }

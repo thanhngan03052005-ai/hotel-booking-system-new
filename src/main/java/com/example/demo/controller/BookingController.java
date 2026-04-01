@@ -41,4 +41,10 @@ public class BookingController {
         System.out.println("API /log được gọi");
         return service.getLogs();
     }
+
+    @PostMapping("/replicate-log")
+    public String replicateLog(@RequestBody String log) {
+        service.addLog(log);
+        return "OK";
+    }
 }
