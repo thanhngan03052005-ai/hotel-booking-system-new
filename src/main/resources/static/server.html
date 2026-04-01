@@ -1,10 +1,16 @@
 <!DOCTYPE html>
+
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Server Log</title>
 
   <style>
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       padding: 20px;
@@ -15,13 +21,13 @@
 
     h1 {
       color: #00ff66;
-      margin-bottom: 10px;
+      margin-bottom: 16px;
     }
 
     .top-bar {
       display: flex;
+      gap: 12px;
       align-items: center;
-      gap: 15px;
       margin-bottom: 20px;
       flex-wrap: wrap;
     }
@@ -41,26 +47,25 @@
     }
 
     #lastUpdate {
-      color: #9ca3af;
+      color: #b5b5b5;
       font-size: 14px;
     }
 
     .group {
       margin-bottom: 20px;
-      padding: 15px;
+      padding: 14px;
       border-radius: 12px;
-      box-shadow: 0 0 10px rgba(0,0,0,0.35);
-      max-height: 280px;
+      max-height: 260px;
       overflow-y: auto;
+      box-shadow: 0 0 10px rgba(0,0,0,0.35);
     }
 
     .group h3 {
       margin-top: 0;
-      margin-bottom: 12px;
       position: sticky;
       top: 0;
-      padding-bottom: 8px;
       background: inherit;
+      padding-bottom: 8px;
     }
 
     .booking-group {
@@ -85,7 +90,7 @@
 
     .all-group {
       background: #1f2937;
-      border-left: 5px solid #9ca3af;
+      border-left: 5px solid #8b949e;
     }
 
     .log {
@@ -96,31 +101,17 @@
       word-break: break-word;
     }
 
-    .empty {
-      color: #b0b0b0;
-      font-style: italic;
-      padding: 8px 0;
-    }
-
     .booking-log { color: #66ccff; }
-    .prepare-log { color: #ffe600; }
+    .prepare-log { color: #ffe066; }
     .commit-log { color: #00ff88; }
-    .error-log { color: #ff6666; }
+    .error-log { color: #ff6b6b; }
 
-    ::-webkit-scrollbar {
-      width: 8px;
-    }
-
-    ::-webkit-scrollbar-track {
-      background: rgba(255,255,255,0.05);
-      border-radius: 10px;
-    }
-
-    ::-webkit-scrollbar-thumb {
-      background: rgba(255,255,255,0.25);
-      border-radius: 10px;
+    .empty {
+      color: #b5b5b5;
+      font-style: italic;
     }
   </style>
+
 </head>
 <body>
 
@@ -156,33 +147,62 @@
     <div id="all"></div>
   </div>
 
-<script>
+  <script>
   const servers = [
-    "https://dien-toan-lan-hai.onrender.com",
-    "https://hotel-booking-system-new.onrender.com",
-    "https://dientoanck.onrender.com"
+    {
+      name: "Server 1",
+      url: "https://dien-toan-lan-hai.onrender.com"
+    },
+    {
+      name: "Booking Server",
+      url: "https://hotel-booking-system-new.onrender.com"
+    },
+    {
+      name: "Server 3",
+      url: "https://dientoanck.onrender.com"
+    }
   ];
 
+  function convertUTCToVN(log) {
+    const match = log.match(/\[(.*?)\]/);
+
+    if (!match) return log;
+
+    const rawTime = match[1];
+
+    // chỉ đổi nếu log đang ở dạng UTC/ISO
+    if (rawTime.includes("T") || rawTime.includes("Z")) {
+      const date = new Date(rawTime);
+
+      if (!isNaN(date)) {
+        const vnTime = date.toLocaleString("vi-VN", {
+          timeZone: "Asia/Ho_Chi_Minh"
+        });
+
+        return log.replace(`[${rawTime}]`, `[${vnTime}]`);
+      }
+    }
+
+    return log;
+  }
+
   async function loadLog() {
+    ["booking", "prepare", "commit", "error", "all"].forEach(id => {
+      document.getElementById(id).innerHTML =
+        '<div class="empty">Đang tải...</div>';
+    });
 
-    document.getElementById("booking").innerHTML = '<div class="empty">Đang tải...</div>';
-    document.getElementById("prepare").innerHTML = '<div class="empty">Đang tải...</div>';
-    document.getElementById("commit").innerHTML = '<div class="empty">Đang tải...</div>';
-    document.getElementById("error").innerHTML = '<div class="empty">Đang tải...</div>';
-    document.getElementById("all").innerHTML = '<div class="empty">Đang tải...</div>';
-
-    let bookingLogs = [];
-    let prepareLogs = [];
-    let commitLogs = [];
-    let errorLogs = [];
-    let allLogs = [];
+    const bookingLogs = [];
+    const prepareLogs = [];
+    const commitLogs = [];
+    const errorLogs = [];
+    const allLogs = [];
 
     await Promise.all(
-      servers.map(async (url) => {
+      servers.map(async server => {
         try {
-          // thêm timestamp để tránh browser cache log cũ
           const response = await fetch(
-            `${url}/api/log?t=${Date.now()}`,
+            `${server.url}/api/log?t=${Date.now()}`,
             {
               method: "GET",
               cache: "no-store"
@@ -190,28 +210,32 @@
           );
 
           if (!response.ok) {
-            throw new Error("Không lấy được log");
+            throw new Error(`HTTP ${response.status}`);
           }
 
           const data = await response.json();
 
-          if (!Array.isArray(data) || data.length === 0) {
-            allLogs.unshift(
-              `<div class="log error-log">⚠️ [${url}] Không có log</div>`
-            );
+          if (!Array.isArray(data)) {
+            throw new Error("/api/log không trả về mảng");
+          }
+
+          if (data.length === 0) {
+            const msg = `<div class="log error-log">⚠️ [${server.name}] Không có log</div>`;
+            allLogs.unshift(msg);
             return;
           }
 
-          // đảo ngược để log mới nhất hiện trên cùng
           [...data].reverse().forEach(log => {
-            const fullLog = `[${url}] ${log}`;
-            const upper = log.toUpperCase();
+            log = convertUTCToVN(log);
+
+            const fullLog = `[${server.name}] ${log}`;
+            const upper = fullLog.toUpperCase();
 
             allLogs.unshift(
               `<div class="log">${fullLog}</div>`
             );
 
-            if (url.includes("hotel-booking-system-new")) {
+            if (server.name === "Booking Server") {
               bookingLogs.unshift(
                 `<div class="log booking-log">${fullLog}</div>`
               );
@@ -226,8 +250,8 @@
             if (
               upper.includes("COMMIT") ||
               upper.includes("VOTE OK") ||
-              upper.includes("ĐẶT PHÒNG THÀNH CÔNG") ||
-              upper.includes("BOOKING SUCCESS")
+              upper.includes("BOOKING SUCCESS") ||
+              upper.includes("ĐẶT PHÒNG THÀNH CÔNG")
             ) {
               commitLogs.unshift(
                 `<div class="log commit-log">${fullLog}</div>`
@@ -237,7 +261,8 @@
             if (
               upper.includes("ERROR") ||
               upper.includes("FAIL") ||
-              upper.includes("ABORT")
+              upper.includes("ABORT") ||
+              upper.includes("DOWN")
             ) {
               errorLogs.unshift(
                 `<div class="log error-log">${fullLog}</div>`
@@ -246,14 +271,10 @@
           });
 
         } catch (err) {
-          const downMessage = `
-            <div class="log error-log">
-              ❌ [${url}] Server DOWN hoặc không lấy được log
-            </div>
-          `;
+          const message = `<div class="log error-log">❌ [${server.name}] Không thể tải log: ${err.message}</div>`;
 
-          errorLogs.unshift(downMessage);
-          allLogs.unshift(downMessage);
+          errorLogs.unshift(message);
+          allLogs.unshift(message);
         }
       })
     );
@@ -271,7 +292,7 @@
     document.getElementById("commit").innerHTML =
       commitLogs.length
         ? commitLogs.join("")
-        : '<div class="empty">Chưa có log đặt phòng thành công / COMMIT</div>';
+        : '<div class="empty">Chưa có log COMMIT</div>';
 
     document.getElementById("error").innerHTML =
       errorLogs.length
@@ -284,14 +305,15 @@
         : '<div class="empty">Không có log nào</div>';
 
     document.getElementById("lastUpdate").innerText =
-      "Cập nhật lúc: " + new Date().toLocaleTimeString("vi-VN");
+      "Cập nhật lúc: " +
+      new Date().toLocaleTimeString("vi-VN", {
+        timeZone: "Asia/Ho_Chi_Minh"
+      });
   }
 
   window.onload = () => {
     loadLog();
-
-    // chỉ tạo 1 interval duy nhất
-    setInterval(loadLog, 3000);
+    setInterval(loadLog, 6000);
   };
 </script>
 
