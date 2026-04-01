@@ -1,130 +1,292 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-<meta charset="UTF-8">
-<title>Server Log</title>
+  <meta charset="UTF-8">
+  <title>Server Log</title>
 
-<style>
-body {
-  font-family: Arial;
-  background: #0d1117;
-  color: #fff;
-  padding: 20px;
-}
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #0d1117;
+      color: white;
+    }
 
-h1 { color: #00ff00; }
+    h1 {
+      color: #00ff66;
+      margin-bottom: 10px;
+    }
 
-button {
-  padding: 10px 20px;
-  margin: 10px 0;
-  border: none;
-  border-radius: 6px;
-  background: #00ff00;
-  color: #000;
-  cursor: pointer;
-}
+    .top-bar {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
 
-.group {
-  margin-top: 20px;
-  padding: 15px;
-  border-radius: 10px;
-}
+    button {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 8px;
+      background: #00ff66;
+      color: black;
+      font-weight: bold;
+      cursor: pointer;
+    }
 
-.req { background: #001f2f; }
-.ok  { background: #002f00; }
-.err { background: #2f0000; }
+    button:hover {
+      opacity: 0.9;
+    }
 
-.log {
-  font-family: monospace;
-  margin: 5px 0;
-}
-</style>
+    #lastUpdate {
+      color: #9ca3af;
+      font-size: 14px;
+    }
+
+    .group {
+      margin-bottom: 20px;
+      padding: 15px;
+      border-radius: 12px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.35);
+      max-height: 280px;
+      overflow-y: auto;
+    }
+
+    .group h3 {
+      margin-top: 0;
+      margin-bottom: 12px;
+      position: sticky;
+      top: 0;
+      padding-bottom: 8px;
+      background: inherit;
+    }
+
+    .booking-group {
+      background: #08253d;
+      border-left: 5px solid #00bfff;
+    }
+
+    .prepare-group {
+      background: #3d3200;
+      border-left: 5px solid #ffe600;
+    }
+
+    .commit-group {
+      background: #00331f;
+      border-left: 5px solid #00ff66;
+    }
+
+    .error-group {
+      background: #3a0000;
+      border-left: 5px solid #ff4d4d;
+    }
+
+    .all-group {
+      background: #1f2937;
+      border-left: 5px solid #9ca3af;
+    }
+
+    .log {
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      word-break: break-word;
+    }
+
+    .empty {
+      color: #b0b0b0;
+      font-style: italic;
+      padding: 8px 0;
+    }
+
+    .booking-log { color: #66ccff; }
+    .prepare-log { color: #ffe600; }
+    .commit-log { color: #00ff88; }
+    .error-log { color: #ff6666; }
+
+    ::-webkit-scrollbar {
+      width: 8px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: rgba(255,255,255,0.05);
+      border-radius: 10px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.25);
+      border-radius: 10px;
+    }
+  </style>
 </head>
-
 <body>
 
-<h1>🖥 Server Log (Tất cả server)</h1>
+  <h1>🖥 Server Log (Tất cả server)</h1>
 
-<button onclick="loadLog()">🔄 Tải log</button>
+  <div class="top-bar">
+    <button onclick="loadLog()">🔄 Tải log</button>
+    <div id="lastUpdate">Chưa cập nhật</div>
+  </div>
 
-<div class="group req">
-  <h3>📥 Booking</h3>
-  <div id="request"></div>
-</div>
+  <div class="group booking-group">
+    <h3>📥 Booking Server</h3>
+    <div id="booking"></div>
+  </div>
 
-<div class="group ok">
-  <h3>🔁 Replicate / 2PC</h3>
-  <div id="success"></div>
-</div>
+  <div class="group prepare-group">
+    <h3>📦 PREPARE</h3>
+    <div id="prepare"></div>
+  </div>
 
-<div class="group err">
-  <h3>📋 Tất cả log</h3>
-  <div id="all"></div>
-</div>
+  <div class="group commit-group">
+    <h3>✅ COMMIT / VOTE OK</h3>
+    <div id="commit"></div>
+  </div>
 
-<script>
-// 👉 DANH SÁCH SERVER
-const servers = [
-  "https://dien-toan-lan-hai.onrender.com",
-  "https://hotel-booking-system-new.onrender.com",
-  "https://dien-toan-lan-hai-488r.onrender.com"
-];
+  <div class="group error-group">
+    <h3>❌ ERROR / FAIL / ABORT</h3>
+    <div id="error"></div>
+  </div>
 
-function loadLog() {
+  <div class="group all-group">
+    <h3>📋 Tất cả log</h3>
+    <div id="all"></div>
+  </div>
 
-  let requestLogs = "";
-  let replicateLogs = "";
-  let allLogs = "";
+  <script>
+    const servers = [
+      "https://dien-toan-lan-hai.onrender.com",
+      "https://hotel-booking-system-new.onrender.com",
+      "https://dientoanck.onrender.com"
+    ];
 
-  Promise.all(
-    servers.map(url =>
-      fetch(url + "/api/log")
-        .then(res => res.json())
-        .then(data => {
+    async function loadLog() {
 
-          if (!data || data.length === 0) {
-            allLogs += `<div class="log">⚠️ ${url} chưa có log</div>`;
+      // loading
+      document.getElementById("booking").innerHTML = '<div class="empty">Đang tải...</div>';
+      document.getElementById("prepare").innerHTML = '<div class="empty">Đang tải...</div>';
+      document.getElementById("commit").innerHTML = '<div class="empty">Đang tải...</div>';
+      document.getElementById("error").innerHTML = '<div class="empty">Đang tải...</div>';
+      document.getElementById("all").innerHTML = '<div class="empty">Đang tải...</div>';
+
+      // reset mảng log
+      let bookingLogs = [];
+      let prepareLogs = [];
+      let commitLogs = [];
+      let errorLogs = [];
+      let allLogs = [];
+
+      await Promise.all(
+        servers.map(async (url) => {
+          try {
+            const response = await fetch(url + "/api/log");
+            const data = await response.json();
+
+            if (!Array.isArray(data) || data.length === 0) {
+              allLogs.unshift(
+                `<div class="log error-log">⚠️ [${url}] Không có log</div>`
+              );
+              return;
+            }
+
+            data.forEach(log => {
+              const fullLog = `[${url}] ${log}`;
+              const upper = log.toUpperCase();
+
+              // tất cả log
+              allLogs.unshift(
+                `<div class="log">${fullLog}</div>`
+              );
+
+              // log của server booking
+              if (url.includes("hotel-booking-system-new")) {
+                bookingLogs.unshift(
+                  `<div class="log booking-log">${fullLog}</div>`
+                );
+              }
+
+              // PREPARE
+              if (upper.includes("PREPARE")) {
+                prepareLogs.unshift(
+                  `<div class="log prepare-log">${fullLog}</div>`
+                );
+              }
+
+              // COMMIT hoặc VOTE OK
+              if (
+                upper.includes("COMMIT") ||
+                upper.includes("VOTE OK")
+              ) {
+                commitLogs.unshift(
+                  `<div class="log commit-log">${fullLog}</div>`
+                );
+              }
+
+              // ERROR / FAIL / ABORT
+              if (
+                upper.includes("ERROR") ||
+                upper.includes("FAIL") ||
+                upper.includes("ABORT")
+              ) {
+                errorLogs.unshift(
+                  `<div class="log error-log">${fullLog}</div>`
+                );
+              }
+            });
+
+          } catch (err) {
+            const downMessage = `
+              <div class="log error-log">
+                ❌ [${url}] Server DOWN hoặc không lấy được log
+              </div>
+            `;
+
+            errorLogs.unshift(downMessage);
+            allLogs.unshift(downMessage);
           }
-
-          data.forEach(log => {
-
-            // 👉 thêm prefix server
-            const fullLog = `[${url}] ${log}`;
-
-            allLogs += `<div class="log">${fullLog}</div>`;
-
-            if (log.toLowerCase().includes("booking")) {
-              requestLogs += `<div class="log" style="color:#00bfff">${fullLog}</div>`;
-            }
-            else if (
-              log.includes("PREPARE") ||
-              log.includes("COMMIT") ||
-              log.includes("2PC")
-            ) {
-              replicateLogs += `<div class="log" style="color:#00ff00">${fullLog}</div>`;
-            }
-
-          });
-
         })
-        .catch(() => {
-          allLogs += `<div class="log">❌ ${url} DOWN</div>`;
-        })
-    )
-  ).then(() => {
+      );
 
-    document.getElementById("request").innerHTML = requestLogs;
-    document.getElementById("success").innerHTML = replicateLogs;
-    document.getElementById("all").innerHTML = allLogs;
+      document.getElementById("booking").innerHTML =
+        bookingLogs.length
+          ? bookingLogs.join("")
+          : '<div class="empty">Không có log từ Booking Server</div>';
 
-  });
+      document.getElementById("prepare").innerHTML =
+        prepareLogs.length
+          ? prepareLogs.join("")
+          : '<div class="empty">Không có log PREPARE</div>';
 
-}
+      document.getElementById("commit").innerHTML =
+        commitLogs.length
+          ? commitLogs.join("")
+          : '<div class="empty">Không có log COMMIT / VOTE OK</div>';
 
-// 👉 auto load khi mở trang
-window.onload = loadLog;
+      document.getElementById("error").innerHTML =
+        errorLogs.length
+          ? errorLogs.join("")
+          : '<div class="empty">Không có log ERROR</div>';
 
-</script>
+      document.getElementById("all").innerHTML =
+        allLogs.length
+          ? allLogs.join("")
+          : '<div class="empty">Không có log nào</div>';
+
+      document.getElementById("lastUpdate").innerText =
+        "Cập nhật lúc: " + new Date().toLocaleTimeString("vi-VN");
+    }
+
+    // tự động tải khi mở trang
+    window.onload = () => {
+      loadLog();
+
+      // tự động refresh mỗi 5 giây
+      setInterval(loadLog, 5000);
+    };
+  </script>
 
 </body>
 </html>
