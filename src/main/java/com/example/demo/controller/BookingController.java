@@ -10,7 +10,7 @@ import java.util.List;
 
 @RestController
 @RequestMapping("/api")
-@CrossOrigin
+@CrossOrigin(origins = "*")
 public class BookingController {
 
     @Autowired
@@ -19,15 +19,26 @@ public class BookingController {
     @Value("${server.id}")
     private String serverId;
 
+    // ✅ API tạo booking (CHÍNH)
+    @PostMapping("/book")
+    public String book(@RequestBody Booking b) {
+        System.out.println("Nhận request /book: " + b.getName());
+        service.book(b, serverId);
+        return "Booking thành công!";
+    }
+
+    // ✅ API nhận replicate từ server khác
     @PostMapping("/replicate")
     public String replicate(@RequestBody Booking b) {
+        System.out.println("Nhận replicate: " + b.getName());
         service.replicate(b, serverId);
-        return "OK";
+        return "Replicated OK";
     }
 
+    // ✅ API lấy log
     @GetMapping("/log")
     public List<String> logs() {
+        System.out.println("API /log được gọi");
         return service.getLogs();
     }
-
 }
