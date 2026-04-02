@@ -4,6 +4,7 @@ import com.example.demo.model.Booking;
 import com.example.demo.service.BookingService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -32,7 +33,10 @@ public class BookingController {
     public boolean prepare(@RequestBody Booking b) {
         return service.prepare(b);
     }
-
+@PostMapping("/api/pre-commit")
+public ResponseEntity<String> preCommit(@RequestBody Booking booking) {
+    return ResponseEntity.ok("PRE_ACK"); // Phải trả về đúng chữ này
+}
     // ✅ COMMIT (Phase 2)
     @PostMapping("/commit")
     public String commit(@RequestBody Booking b) {
