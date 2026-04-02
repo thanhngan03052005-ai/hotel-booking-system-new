@@ -1,10 +1,9 @@
 <!DOCTYPE html>
-
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Server Log</title>
+  <title>Server Log - 4-Phase Commit (4PC)</title>
 
   <style>
     * {
@@ -68,72 +67,49 @@
       padding-bottom: 8px;
     }
 
-    .booking-group {
-      background: #08253d;
-      border-left: 5px solid #00bfff;
-    }
+    .booking-group { background: #08253d; border-left: 5px solid #00bfff; }
+    .prepare-group { background: #3d3200; border-left: 5px solid #ffe600; }
+    .precommit-group { background: #3d1a00; border-left: 5px solid #ff8c00; } /* Màu cam cho Pre-commit */
+    .commit-group { background: #00331f; border-left: 5px solid #00ff66; }
+    .error-group { background: #3a0000; border-left: 5px solid #ff4d4d; }
+    .all-group { background: #1f2937; border-left: 5px solid #8b949e; }
 
-    .prepare-group {
-      background: #3d3200;
-      border-left: 5px solid #ffe600;
-    }
+    .log { font-family: Consolas, monospace; font-size: 13px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08); word-break: break-word; }
 
-    .commit-group {
-      background: #00331f;
-      border-left: 5px solid #00ff66;
-    }
-
-    .error-group {
-      background: #3a0000;
-      border-left: 5px solid #ff4d4d;
-    }
-
-    .all-group {
-      background: #1f2937;
-      border-left: 5px solid #8b949e;
-    }
-
-    .log {
-      font-family: Consolas, monospace;
-      font-size: 13px;
-      padding: 6px 0;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      word-break: break-word;
-    }
-
-    .booking-log { color: #66ccff; }
+   .booking-log { color: #66ccff; }
     .prepare-log { color: #ffe066; }
+    .precommit-log { color: #ffa500; }
     .commit-log { color: #00ff88; }
     .error-log { color: #ff6b6b; }
-
-    .empty {
-      color: #b5b5b5;
-      font-style: italic;
-    }
+    .empty { color: #b5b5b5; font-style: italic; }
   </style>
-
 </head>
 <body>
 
-  <h1>🖥 Server Log (Tất cả server)</h1>
+  <h1>🖥 Server Log (Giao thức 4PC)</h1>
 
   <div class="top-bar">
-    <button onclick="loadLog()">🔄 Tải log</button>
+    <button onclick="loadLog()">🔄 Tải log mới</button>
     <div id="lastUpdate">Chưa cập nhật</div>
   </div>
 
   <div class="group booking-group">
-    <h3>📥 Booking Server</h3>
+    <h3>📥 Booking Server (Điều phối viên)</h3>
     <div id="booking"></div>
   </div>
 
   <div class="group prepare-group">
-    <h3>📦 PREPARE</h3>
+    <h3>📦 PHA 1: PREPARE / VOTE</h3>
     <div id="prepare"></div>
   </div>
 
+  <div class="group precommit-group">
+    <h3>🟠 PHA 2: PRE-COMMIT (Tạm lưu)</h3>
+    <div id="precommit"></div>
+  </div>
+
   <div class="group commit-group">
-    <h3>✅ COMMIT / VOTE OK</h3>
+    <h3>✅ PHA 3 & 4: COMMIT / ACK</h3>
     <div id="commit"></div>
   </div>
 
@@ -143,7 +119,7 @@
   </div>
 
   <div class="group all-group">
-    <h3>📋 Tất cả log</h3>
+    <h3>📋 Toàn bộ lịch sử Log</h3>
     <div id="all"></div>
   </div>
 
@@ -171,36 +147,21 @@
   function convertUTCToVN(log) {
     const match = log.match(/\[(.*?)\]/);
     if (!match) return log;
-
     const rawTime = match[1].trim();
-    let date = null;
-
-    if (rawTime.includes("T") || rawTime.includes("Z")) {
-      date = new Date(rawTime);
-    } else if (/^\\d{4}-\\d{2}-\\d{2}/.test(rawTime)) {
-      date = new Date(rawTime.replace(" ", "T"));
-    }
-
-    if (!date || isNaN(date.getTime())) {
-      return log;
-    }
-
-    const vnTime = date.toLocaleString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      hour12: false
-    });
-
-    return log.replace("[" + rawTime + "]", "[" + vnTime + "]");
+    let date = new Date(rawTime);
+    if (isNaN(date.getTime())) return log;
+    return log.replace("[" + rawTime + "]", "[" + date.toLocaleString("vi-VN", {timeZone: "Asia/Ho_Chi_Minh", hour12: false}) + "]");
   }
 
   async function loadLog() {
-    ["booking", "prepare", "commit", "error", "all"].forEach(id => {
-      document.getElementById(id).innerHTML =
-        '<div class="empty">Đang tải...</div>';
+    // Thêm precommit vào danh sách reset
+    ["booking", "prepare", "precommit", "commit", "error", "all"].forEach(id => {
+      document.getElementById(id).innerHTML = '<div class="empty">Đang tải...</div>';
     });
 
     const bookingLogs = [];
     const prepareLogs = [];
+    const precommitLogs = []; // Array mới
     const commitLogs = [];
     const errorLogs = [];
     const allLogs = [];
@@ -208,121 +169,66 @@
     await Promise.all(
       servers.map(async server => {
         try {
-          const response = await fetch(
-            `${server.url}/api/log?t=${Date.now()}`,
-            {
-              method: "GET",
-              cache: "no-store"
-            }
-          );
-
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-          }
-
+          const response = await fetch(`${server.url}/api/log?t=${Date.now()}`, { cache: "no-store" });
           const data = await response.json();
-
-          if (!Array.isArray(data)) {
-            throw new Error("/api/log không trả về mảng");
-          }
-
-          if (data.length === 0) {
-            const msg = `<div class="log error-log">⚠️ [${server.name}] Không có log</div>`;
-            allLogs.unshift(msg);
-            return;
-          }
+          if (!Array.isArray(data)) return;
 
           [...data].reverse().forEach(log => {
             log = convertUTCToVN(log);
-
             const fullLog = `[${server.name}] ${log}`;
             const upper = fullLog.toUpperCase();
 
-            allLogs.unshift(
-              `<div class="log">${fullLog}</div>`
-            );
+            allLogs.unshift(`<div class="log">${fullLog}</div>`);
 
             if (server.name === "Booking Server") {
-              bookingLogs.unshift(
-                `<div class="log booking-log">${fullLog}</div>`
-              );
+              bookingLogs.unshift(`<div class="log booking-log">${fullLog}</div>`);
             }
 
-            if (upper.includes("PREPARE")) {
-              prepareLogs.unshift(
-                `<div class="log prepare-log">${fullLog}</div>`
-              );
+            // LỌC PHA 1
+            if (upper.includes("PREPARE") || upper.includes("VOTE")) {
+              prepareLogs.unshift(`<div class="log prepare-log">${fullLog}</div>`);
             }
 
+            // LỌC PHA 2: PRE-COMMIT (MỚI)
+            if (upper.includes("PRE-COMMIT") || upper.includes("PRECOMMIT") || upper.includes("PRE_ACK")) {
+              precommitLogs.unshift(`<div class="log precommit-log">${fullLog}</div>`);
+            }
+
+            // LỌC PHA 3 & 4
             if (
-              upper.includes("COMMIT") ||
-              upper.includes("VOTE OK") ||
-              upper.includes("BOOKING SUCCESS") ||
-              upper.includes("ĐẶT PHÒNG THÀNH CÔNG")
+              upper.includes("COMMIT") || 
+              upper.includes("SUCCESS") || 
+              upper.includes("ACK") || 
+              upper.includes("HOÀN TẤT")
             ) {
-              commitLogs.unshift(
-                `<div class="log commit-log">${fullLog}</div>`
-              );
+              commitLogs.unshift(`<div class="log commit-log">${fullLog}</div>`);
             }
 
-            if (
-              upper.includes("ERROR") ||
-              upper.includes("FAIL") ||
-              upper.includes("ABORT") ||
-              upper.includes("DOWN")
-            ) {
-              errorLogs.unshift(
-                `<div class="log error-log">${fullLog}</div>`
-              );
+            // LỌC LỖI
+            if (upper.includes("ERROR") || upper.includes("FAIL") || upper.includes("ABORT")) {
+              errorLogs.unshift(`<div class="log error-log">${fullLog}</div>`);
             }
           });
-
         } catch (err) {
-          const message = `<div class="log error-log">❌ [${server.name}] Không thể tải log: ${err.message}</div>`;
-
-          errorLogs.unshift(message);
-          allLogs.unshift(message);
+          const msg = `<div class="log error-log">❌ [${server.name}] Lỗi: ${err.message}</div>`;
+          errorLogs.unshift(msg);
+          allLogs.unshift(msg);
         }
       })
     );
 
-    document.getElementById("booking").innerHTML =
-      bookingLogs.length
-        ? bookingLogs.join("")
-        : '<div class="empty">Không có log từ Booking Server</div>';
+    // Render dữ liệu ra giao diện
+    document.getElementById("booking").innerHTML = bookingLogs.join("") || '<div class="empty">Trống</div>';
+    document.getElementById("prepare").innerHTML = prepareLogs.join("") || '<div class="empty">Trống</div>';
+    document.getElementById("precommit").innerHTML = precommitLogs.join("") || '<div class="empty">Chưa có log PRE-COMMIT</div>';
+    document.getElementById("commit").innerHTML = commitLogs.join("") || '<div class="empty">Trống</div>';
+    document.getElementById("error").innerHTML = errorLogs.join("") || '<div class="empty">Trống</div>';
+    document.getElementById("all").innerHTML = allLogs.join("") || '<div class="empty">Trống</div>';
 
-    document.getElementById("prepare").innerHTML =
-      prepareLogs.length
-        ? prepareLogs.join("")
-        : '<div class="empty">Không có log PREPARE</div>';
-
-    document.getElementById("commit").innerHTML =
-      commitLogs.length
-        ? commitLogs.join("")
-        : '<div class="empty">Chưa có log COMMIT</div>';
-
-    document.getElementById("error").innerHTML =
-      errorLogs.length
-        ? errorLogs.join("")
-        : '<div class="empty">Không có log ERROR</div>';
-
-    document.getElementById("all").innerHTML =
-      allLogs.length
-        ? allLogs.join("")
-        : '<div class="empty">Không có log nào</div>';
-
-    document.getElementById("lastUpdate").innerText =
-      "Cập nhật lúc: " +
-      new Date().toLocaleTimeString("vi-VN", {
-        timeZone: "Asia/Ho_Chi_Minh"
-      });
+    document.getElementById("lastUpdate").innerText = "Cập nhật: " + new Date().toLocaleTimeString("vi-VN");
   }
 
-  window.onload = () => {
-    loadLog();
-    setInterval(loadLog, 16000);
-  };
+  window.onload = () => { loadLog(); setInterval(loadLog, 16000); };
 </script>
-
 </body>
 </html>
