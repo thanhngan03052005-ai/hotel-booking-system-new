@@ -86,7 +86,7 @@ public class BookingService {
 
             // ===== QUYẾT ĐỊNH THEO QUORUM (ĐA SỐ) =====
             // Tính toán: Chỉ cần >= 50% số server khác OK (hoặc tùy bạn chỉnh ngưỡng)
-            int threshold = (otherServers.length / 2); 
+            int threshold = ((otherServers.length / 2)+1); 
 
             if (okServers.size() >= threshold) {
                 tick();
