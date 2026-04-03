@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.LocalTime;
 import java.util.*;
@@ -26,6 +27,9 @@ public class BookingService {
     };
 
     private ConcurrentHashMap<String, Boolean> serverStatus = new ConcurrentHashMap<>();
+
+    // 🔥 Lưu các commit bị fail để recovery
+    private ConcurrentHashMap<String, List<Booking>> pendingCommits = new ConcurrentHashMap<>();
 
     private ExecutorService executor = Executors.newFixedThreadPool(5);
 
@@ -60,7 +64,7 @@ public class BookingService {
             RestTemplate rt = createRestTemplate();
             List<String> okServers = Collections.synchronizedList(new ArrayList<>());
 
-            // ===== PHASE 1: PREPARE (SONG SONG) =====
+            // ===== PHASE 1: PREPARE =====
             List<CompletableFuture<Void>> futures = new ArrayList<>();
 
             for (String url : otherServers) {
@@ -153,23 +157,24 @@ public class BookingService {
                 tick();
                 logs.add(log("4PC", "ĐỦ PRE_ACK → COMMIT"));
 
+                // commit local
                 repository.save(b);
                 logs.add(log("DATABASE", "COMMIT local OK"));
 
-                List<CompletableFuture<Void>> commitFutures = new ArrayList<>();
-
+                // ===== PHASE 3: COMMIT =====
                 for (String url : preAckServers) {
-                    commitFutures.add(CompletableFuture.runAsync(() -> {
-                        try {
-                            rt.postForObject(url + "/api/commit", b, String.class);
-                            logs.add(log("4PC", "COMMIT → " + url));
-                        } catch (Exception e) {
-                            logs.add(log("ERROR", "COMMIT fail: " + url));
-                        }
-                    }, executor));
-                }
+                    try {
+                        rt.postForObject(url + "/api/commit", b, String.class);
+                        logs.add(log("4PC", "COMMIT → " + url));
+                    } catch (Exception e) {
+                        logs.add(log("ERROR", "COMMIT fail: " + url));
 
-                CompletableFuture.allOf(commitFutures.toArray(new CompletableFuture[0])).join();
+                        // 🔥 lưu lại để recovery
+                        pendingCommits
+                                .computeIfAbsent(url, k -> Collections.synchronizedList(new ArrayList<>()))
+                                .add(b);
+                    }
+                }
 
             } else {
                 logs.add(log("4PC", "TIMEOUT → ABORT"));
@@ -177,6 +182,32 @@ public class BookingService {
             }
 
         }, executor);
+    }
+
+    // ================= RECOVERY AUTO =================
+    @Scheduled(fixedDelay = 5000)
+    public void autoRecovery() {
+        RestTemplate rt = createRestTemplate();
+
+        for (String url : pendingCommits.keySet()) {
+
+            List<Booking> list = pendingCommits.get(url);
+            Iterator<Booking> iterator = list.iterator();
+
+            while (iterator.hasNext()) {
+                Booking b = iterator.next();
+
+                try {
+                    rt.postForObject(url + "/api/commit", b, String.class);
+                    logs.add(log("RECOVERY", "Đồng bộ lại thành công → " + url));
+
+                    iterator.remove();
+
+                } catch (Exception e) {
+                    logs.add(log("RECOVERY", "Server chưa sống → " + url));
+                }
+            }
+        }
     }
 
     private void sendAbort(RestTemplate rt, List<String> servers, Booking b) {
