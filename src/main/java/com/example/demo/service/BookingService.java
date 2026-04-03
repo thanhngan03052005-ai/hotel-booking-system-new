@@ -17,7 +17,6 @@ public class BookingService {
     @Autowired
     private BookingRepository repository;
 
-    // Thread-safe log
     private List<String> logs = Collections.synchronizedList(new ArrayList<>());
 
     private String[] otherServers = {
@@ -28,7 +27,6 @@ public class BookingService {
 
     private ConcurrentHashMap<String, Boolean> serverStatus = new ConcurrentHashMap<>();
 
-    // Thread pool (multi-thread)
     private ExecutorService executor = Executors.newFixedThreadPool(5);
 
     private int clock = 0;
@@ -62,11 +60,11 @@ public class BookingService {
             RestTemplate rt = createRestTemplate();
             List<String> okServers = Collections.synchronizedList(new ArrayList<>());
 
-            // ================== PHA 1: PREPARE (SONG SONG) ==================
-            List<CompletableFuture<Void>> prepareFutures = new ArrayList<>();
+            // ===== PHASE 1: PREPARE (SONG SONG) =====
+            List<CompletableFuture<Void>> futures = new ArrayList<>();
 
             for (String url : otherServers) {
-                prepareFutures.add(CompletableFuture.runAsync(() -> {
+                futures.add(CompletableFuture.runAsync(() -> {
                     try {
                         tick();
                         logs.add(log("4PC", "PREPARE → " + url));
@@ -84,7 +82,7 @@ public class BookingService {
                 }, executor));
             }
 
-            CompletableFuture.allOf(prepareFutures.toArray(new CompletableFuture[0])).join();
+            CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
 
             int threshold = (otherServers.length / 2) + 1;
 
@@ -96,12 +94,12 @@ public class BookingService {
 
             logs.add(log("4PC", "QUORUM OK → PRE-COMMIT"));
 
-            // ================== PHA 2: PRE-COMMIT (SONG SONG) ==================
+            // ===== PHASE 2: PRE-COMMIT =====
             List<String> preAckServers = Collections.synchronizedList(new ArrayList<>());
-            List<CompletableFuture<Void>> preCommitFutures = new ArrayList<>();
+            List<CompletableFuture<Void>> preFutures = new ArrayList<>();
 
             for (String url : okServers) {
-                preCommitFutures.add(CompletableFuture.runAsync(() -> {
+                preFutures.add(CompletableFuture.runAsync(() -> {
                     try {
                         tick();
                         logs.add(log("4PC", "PRE-COMMIT → " + url));
@@ -119,9 +117,9 @@ public class BookingService {
                 }, executor));
             }
 
-            CompletableFuture.allOf(preCommitFutures.toArray(new CompletableFuture[0])).join();
+            CompletableFuture.allOf(preFutures.toArray(new CompletableFuture[0])).join();
 
-            // ================== RETRY ==================
+            // ===== RETRY =====
             if (preAckServers.size() < threshold) {
                 logs.add(log("4PC", "Retry PRE-COMMIT..."));
                 sleep(2000);
@@ -149,17 +147,15 @@ public class BookingService {
                 CompletableFuture.allOf(retryFutures.toArray(new CompletableFuture[0])).join();
             }
 
-            // ================== DECISION ==================
+            // ===== DECISION =====
             if (preAckServers.size() >= threshold) {
 
                 tick();
                 logs.add(log("4PC", "ĐỦ PRE_ACK → COMMIT"));
 
-                // commit local
                 repository.save(b);
                 logs.add(log("DATABASE", "COMMIT local OK"));
 
-                // ================== PHA 3: COMMIT ==================
                 List<CompletableFuture<Void>> commitFutures = new ArrayList<>();
 
                 for (String url : preAckServers) {
@@ -183,7 +179,6 @@ public class BookingService {
         }, executor);
     }
 
-    // ================= HELPER =================
     private void sendAbort(RestTemplate rt, List<String> servers, Booking b) {
         for (String url : servers) {
             try {
