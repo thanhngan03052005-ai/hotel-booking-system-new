@@ -203,15 +203,13 @@ public class BookingService {
     }
 public void abort(String globalId) {
     Booking b = repository.findByGlobalId(globalId);
-    if (b == null) {
-        throw new RuntimeException("Booking không tồn tại: " + globalId);
+    if (b != null) {
+        b.setReplicated(false); // rollback trạng thái
+        repository.save(b);
+        logs.add("[4PC] ABORT transaction: " + globalId);
+    } else {
+        logs.add("[4PC] ABORT FAILED: Booking không tồn tại " + globalId);
     }
-
-    // rollback hoặc đánh dấu aborted
-    logs.add("[4PC] ABORT transaction: " + globalId);
-    // nếu dùng Lamport / replicated → reset trạng thái
-    b.setReplicated(false);
-    repository.save(b);
 }
     // ================= UTIL =================
     private RestTemplate createRestTemplate() {

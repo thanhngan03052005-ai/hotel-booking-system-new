@@ -72,16 +72,16 @@ public class BookingController {
     }
 
     // ================= ABORT =================
-    @PostMapping("/abort")
-    public ResponseEntity<String> abort(@RequestBody Booking b) {
-        try {
-            service.abort(b);
-            return ResponseEntity.ok("ABORT OK");
-        } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.status(500).body("ABORT FAILED: " + e.getMessage());
-        }
+    @PostMapping("/abort/{globalId}")
+public ResponseEntity<String> abort(@PathVariable String globalId) {
+    try {
+        service.abort(globalId); 
+        return ResponseEntity.ok("ABORT OK");
+    } catch (Exception e) {
+        e.printStackTrace();
+        return ResponseEntity.status(500).body("ABORT FAILED: " + e.getMessage());
     }
+}
 
     // ================= LOG =================
     @GetMapping("/log")
