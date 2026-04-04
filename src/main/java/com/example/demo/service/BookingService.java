@@ -219,8 +219,8 @@ public class BookingService {
     Map<String, Boolean> status = new HashMap<>();
 
     for (String url : otherServers) {
-        status.put(url, true); 
+        status.put(url, true); }
 
     return status;
 }
-    }}
+    }
