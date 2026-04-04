@@ -11,6 +11,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
 public class BookingService {
@@ -28,12 +29,12 @@ public class BookingService {
 
     private ConcurrentHashMap<String, Boolean> serverStatus = new ConcurrentHashMap<>();
 
-    // 🔥 Lưu các commit bị fail để recovery
     private ConcurrentHashMap<String, List<Booking>> pendingCommits = new ConcurrentHashMap<>();
 
     private ExecutorService executor = Executors.newFixedThreadPool(5);
 
-    private int clock = 0;
+    // 🔥 FIX race condition
+    private AtomicInteger clock = new AtomicInteger(0);
 
     public BookingService() {
         for (String url : otherServers) {
@@ -42,22 +43,24 @@ public class BookingService {
     }
 
     // ================= LAMPORT =================
-    private synchronized int tick() { return ++clock; }
+    private int tick() {
+        return clock.incrementAndGet();
+    }
 
-    private synchronized void updateClock(int received) {
-        clock = Math.max(clock, received) + 1;
+    private void updateClock(int received) {
+        clock.updateAndGet(c -> Math.max(c, received) + 1);
     }
 
     private String log(String type, String message) {
         String time = LocalTime.now().withNano(0).toString();
-        return "[" + time + "] [L=" + clock + "] [" + type + "] " + message;
+        return "[" + time + "] [L=" + clock.get() + "] [" + type + "] " + message;
     }
 
     // ================= MAIN =================
     public void book(Booking b, String serverId) {
         tick();
         logs.add(log("CLIENT", "Nhận request: " + b.getName()));
-        b.setLamportTime(clock);
+        b.setLamportTime(clock.get());
 
         CompletableFuture.runAsync(() -> {
 
@@ -81,6 +84,7 @@ public class BookingService {
                         }
 
                     } catch (Exception e) {
+                        serverStatus.put(url, false);
                         logs.add(log("ERROR", "PREPARE fail: " + url));
                     }
                 }, executor));
@@ -157,11 +161,11 @@ public class BookingService {
                 tick();
                 logs.add(log("4PC", "ĐỦ PRE_ACK → COMMIT"));
 
-                // commit local
+                // 🔥 COMMIT LOCAL
                 repository.save(b);
                 logs.add(log("DATABASE", "COMMIT local OK"));
 
-                // ===== PHASE 3: COMMIT =====
+                // 🔥 COMMIT REMOTE
                 for (String url : preAckServers) {
                     try {
                         rt.postForObject(url + "/api/commit", b, String.class);
@@ -169,7 +173,6 @@ public class BookingService {
                     } catch (Exception e) {
                         logs.add(log("ERROR", "COMMIT fail: " + url));
 
-                        // 🔥 lưu lại để recovery
                         pendingCommits
                                 .computeIfAbsent(url, k -> Collections.synchronizedList(new ArrayList<>()))
                                 .add(b);
@@ -184,25 +187,26 @@ public class BookingService {
         }, executor);
     }
 
-    // ================= RECOVERY AUTO =================
+    // ================= RECOVERY =================
     @Scheduled(fixedDelay = 5000)
     public void autoRecovery() {
+
         RestTemplate rt = createRestTemplate();
 
         for (String url : pendingCommits.keySet()) {
 
             List<Booking> list = pendingCommits.get(url);
-            Iterator<Booking> iterator = list.iterator();
+            if (list == null) continue;
 
-            while (iterator.hasNext()) {
-                Booking b = iterator.next();
+            Iterator<Booking> it = list.iterator();
+
+            while (it.hasNext()) {
+                Booking b = it.next();
 
                 try {
                     rt.postForObject(url + "/api/commit", b, String.class);
                     logs.add(log("RECOVERY", "Đồng bộ lại thành công → " + url));
-
-                    iterator.remove();
-
+                    it.remove();
                 } catch (Exception e) {
                     logs.add(log("RECOVERY", "Server chưa sống → " + url));
                 }
@@ -238,7 +242,7 @@ public class BookingService {
 
     public String preCommit(Booking b) {
         updateClock(b.getLamportTime());
-        logs.add(log("4PC", "Nhận PRE-COMMIT → log tạm"));
+        logs.add(log("4PC", "Nhận PRE-COMMIT"));
         return "PRE_ACK";
     }
 
