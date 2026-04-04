@@ -60,7 +60,7 @@ public class BookingService {
         tick();
         logs.add(log("CLIENT", "Nhận request: " + b.getName()));
         b.setLamportTime(clock.get());
-        b.setReplicated(false); // mặc định
+        b.setReplicated(false);
 
         CompletableFuture.runAsync(() -> {
 
@@ -155,11 +155,20 @@ public class BookingService {
                         }
                     }
 
-                    // ===== SET REPLICATED =====
+                    // ===== SET REPLICATED + SYNC =====
                     if (success == preAckServers.size()) {
                         b.setReplicated(true);
                         repository.save(b);
                         logs.add(log("DATABASE", "REPLICATED = TRUE"));
+
+                        // 🔥 broadcast sang các server khác
+                        for (String url : preAckServers) {
+                            try {
+                                rt.postForObject(url + "/api/replicated/" + b.getId(), null, String.class);
+                            } catch (Exception e) {
+                                logs.add(log("ERROR", "SYNC replicated fail: " + url));
+                            }
+                        }
                     }
 
                 } else {
@@ -194,7 +203,6 @@ public class BookingService {
                     logs.add(log("RECOVERY", "Đồng bộ lại thành công → " + url));
                     it.remove();
 
-                    // kiểm tra booking này còn pending ở server nào không
                     boolean done = true;
                     for (List<Booking> otherList : pendingCommits.values()) {
                         if (otherList.contains(b)) {
@@ -203,17 +211,31 @@ public class BookingService {
                         }
                     }
 
-                    // nếu sync xong hết → set TRUE
                     if (done) {
                         b.setReplicated(true);
                         repository.save(b);
                         logs.add(log("DATABASE", "RECOVERY → REPLICATED = TRUE"));
+
+                        // broadcast lại
+                        try {
+                            rt.postForObject(url + "/api/replicated/" + b.getId(), null, String.class);
+                        } catch (Exception ignored) {}
                     }
 
                 } catch (Exception e) {
                     logs.add(log("RECOVERY", "Server chưa sống → " + url));
                 }
             }
+        }
+    }
+
+    // ================= RECEIVE REPLICATED =================
+    public void markReplicated(Long id) {
+        Booking b = repository.findById(id).orElse(null);
+        if (b != null) {
+            b.setReplicated(true);
+            repository.save(b);
+            logs.add(log("DATABASE", "Được đồng bộ replicated = TRUE"));
         }
     }
 

@@ -46,6 +46,13 @@ public class BookingController {
         return "COMMIT OK";
     }
 
+    // ================= REPLICATED SYNC (🔥 QUAN TRỌNG) =================
+    @PostMapping("/replicated/{id}")
+    public String markReplicated(@PathVariable Long id) {
+        service.markReplicated(id);
+        return "REPLICATED OK";
+    }
+
     // ================= ABORT =================
     @PostMapping("/abort")
     public String abort(@RequestBody Booking b) {
