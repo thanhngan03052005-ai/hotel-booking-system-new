@@ -213,4 +213,12 @@ public class BookingService {
     public List<String> getLogs() {
         return logs;
     }
+    public Map<String, Boolean> getServerStatus() {
+    Map<String, Boolean> status = new HashMap<>();
+
+    for (String url : otherServers) {
+        status.put(url, true); 
+
+    return status;
 }
+    }
