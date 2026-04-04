@@ -28,20 +28,12 @@ public class BookingService {
             "https://saythonginsomphone002.onrender.com"
     };
 
-    private ConcurrentHashMap<String, Boolean> serverStatus = new ConcurrentHashMap<>();
     private ConcurrentHashMap<String, List<Booking>> pendingCommits = new ConcurrentHashMap<>();
-
     private ExecutorService executor = Executors.newFixedThreadPool(5);
 
     private AtomicInteger clock = new AtomicInteger(0);
 
-    public BookingService() {
-        for (String url : otherServers) {
-            serverStatus.put(url, true);
-        }
-    }
-
-    // ================= LAMPORT =================
+    // ================= CLOCK =================
     private int tick() {
         return clock.incrementAndGet();
     }
@@ -58,36 +50,31 @@ public class BookingService {
     // ================= MAIN =================
     public void book(Booking b, String serverId) {
         tick();
-        logs.add(log("CLIENT", "Nhận request: " + b.getName()));
+
+        // 🔥 đảm bảo có globalId
+        if (b.getGlobalId() == null) {
+            b.setGlobalId(UUID.randomUUID().toString());
+        }
+
+        logs.add(log("CLIENT", "Booking: " + b.getGlobalId()));
+
         b.setLamportTime(clock.get());
         b.setReplicated(false);
 
         CompletableFuture.runAsync(() -> {
-
             try {
                 RestTemplate rt = createRestTemplate();
                 List<String> okServers = Collections.synchronizedList(new ArrayList<>());
 
-                // ===== PHASE 1: PREPARE =====
+                // ===== PREPARE =====
                 List<CompletableFuture<Void>> futures = new ArrayList<>();
 
                 for (String url : otherServers) {
                     futures.add(CompletableFuture.runAsync(() -> {
                         try {
-                            tick();
-                            logs.add(log("4PC", "PREPARE → " + url));
-
                             Boolean res = rt.postForObject(url + "/api/prepare", b, Boolean.class);
-
-                            if (Boolean.TRUE.equals(res)) {
-                                okServers.add(url);
-                                logs.add(log("4PC", "VOTE OK từ " + url));
-                            }
-
-                        } catch (Exception e) {
-                            serverStatus.put(url, false);
-                            logs.add(log("ERROR", "PREPARE fail: " + url));
-                        }
+                            if (Boolean.TRUE.equals(res)) okServers.add(url);
+                        } catch (Exception ignored) {}
                     }, executor));
                 }
 
@@ -96,91 +83,69 @@ public class BookingService {
                 int threshold = (otherServers.length / 2) + 1;
 
                 if (okServers.size() < threshold) {
-                    logs.add(log("4PC", "ABORT: Không đủ quorum"));
-                    sendAbort(rt, okServers, b);
+                    logs.add(log("4PC", "ABORT"));
                     return;
                 }
 
-                logs.add(log("4PC", "QUORUM OK → PRE-COMMIT"));
-
-                // ===== PHASE 2: PRE-COMMIT =====
-                List<String> preAckServers = Collections.synchronizedList(new ArrayList<>());
-                List<CompletableFuture<Void>> preFutures = new ArrayList<>();
+                // ===== PRE-COMMIT =====
+                List<String> preAckServers = new ArrayList<>();
 
                 for (String url : okServers) {
-                    preFutures.add(CompletableFuture.runAsync(() -> {
-                        try {
-                            tick();
-                            logs.add(log("4PC", "PRE-COMMIT → " + url));
-
-                            String res = rt.postForObject(url + "/api/pre-commit", b, String.class);
-
-                            if ("PRE_ACK".equals(res)) {
-                                preAckServers.add(url);
-                                logs.add(log("4PC", "PRE_ACK từ " + url));
-                            }
-
-                        } catch (Exception e) {
-                            logs.add(log("ERROR", "PRE-COMMIT fail: " + url));
-                        }
-                    }, executor));
+                    try {
+                        String res = rt.postForObject(url + "/api/pre-commit", b, String.class);
+                        if ("PRE_ACK".equals(res)) preAckServers.add(url);
+                    } catch (Exception ignored) {}
                 }
 
-                CompletableFuture.allOf(preFutures.toArray(new CompletableFuture[0])).join();
-
-                // ===== DECISION =====
                 if (preAckServers.size() >= threshold) {
 
-                    tick();
-                    logs.add(log("4PC", "ĐỦ PRE_ACK → COMMIT"));
-
                     // ===== COMMIT LOCAL =====
-                    repository.save(b);
-                    logs.add(log("DATABASE", "COMMIT local OK"));
-
-                    int success = 0;
+                    saveOrUpdate(b);
 
                     // ===== COMMIT REMOTE =====
                     for (String url : preAckServers) {
                         try {
                             rt.postForObject(url + "/api/commit", b, String.class);
-                            success++;
-                            logs.add(log("4PC", "COMMIT → " + url));
                         } catch (Exception e) {
-                            logs.add(log("ERROR", "COMMIT fail: " + url));
-
                             pendingCommits
-                                    .computeIfAbsent(url, k -> Collections.synchronizedList(new ArrayList<>()))
+                                    .computeIfAbsent(url, k -> new ArrayList<>())
                                     .add(b);
                         }
                     }
 
-                    // ===== SET REPLICATED + SYNC =====
-                    if (success == preAckServers.size()) {
-                        b.setReplicated(true);
-                        repository.save(b);
-                        logs.add(log("DATABASE", "REPLICATED = TRUE"));
+                    // ===== SET REPLICATED =====
+                    b.setReplicated(true);
+                    saveOrUpdate(b);
 
-                        // 🔥 broadcast sang các server khác
-                        for (String url : preAckServers) {
-                            try {
-                                rt.postForObject(url + "/api/replicated/" + b.getId(), null, String.class);
-                            } catch (Exception e) {
-                                logs.add(log("ERROR", "SYNC replicated fail: " + url));
-                            }
-                        }
+                    // 🔥 broadcast bằng globalId
+                    for (String url : preAckServers) {
+                        try {
+                            rt.postForObject(url + "/api/replicated/" + b.getGlobalId(), null, String.class);
+                        } catch (Exception ignored) {}
                     }
 
                 } else {
-                    logs.add(log("4PC", "TIMEOUT → ABORT"));
-                    sendAbort(rt, okServers, b);
+                    logs.add(log("4PC", "ABORT"));
                 }
 
             } catch (Exception e) {
-                logs.add(log("FATAL", "THREAD CRASH: " + e.getMessage()));
+                logs.add(log("ERROR", e.getMessage()));
             }
 
         }, executor);
+    }
+
+    // ================= SAVE FIX =================
+    private void saveOrUpdate(Booking b) {
+        Booking existing = repository.findByGlobalId(b.getGlobalId());
+
+        if (existing != null) {
+            existing.setReplicated(b.isReplicated());
+            existing.setLamportTime(b.getLamportTime());
+            repository.save(existing);
+        } else {
+            repository.save(b);
+        }
     }
 
     // ================= RECOVERY =================
@@ -189,9 +154,8 @@ public class BookingService {
         RestTemplate rt = createRestTemplate();
 
         for (String url : pendingCommits.keySet()) {
-
             List<Booking> list = pendingCommits.get(url);
-            if (list == null || list.isEmpty()) continue;
+            if (list == null) continue;
 
             Iterator<Booking> it = list.iterator();
 
@@ -200,54 +164,45 @@ public class BookingService {
 
                 try {
                     rt.postForObject(url + "/api/commit", b, String.class);
-                    logs.add(log("RECOVERY", "Đồng bộ lại thành công → " + url));
                     it.remove();
 
-                    boolean done = true;
-                    for (List<Booking> otherList : pendingCommits.values()) {
-                        if (otherList.contains(b)) {
-                            done = false;
-                            break;
-                        }
-                    }
+                    b.setReplicated(true);
+                    saveOrUpdate(b);
 
-                    if (done) {
-                        b.setReplicated(true);
-                        repository.save(b);
-                        logs.add(log("DATABASE", "RECOVERY → REPLICATED = TRUE"));
+                    rt.postForObject(url + "/api/replicated/" + b.getGlobalId(), null, String.class);
 
-                        // broadcast lại
-                        try {
-                            rt.postForObject(url + "/api/replicated/" + b.getId(), null, String.class);
-                        } catch (Exception ignored) {}
-                    }
-
-                } catch (Exception e) {
-                    logs.add(log("RECOVERY", "Server chưa sống → " + url));
-                }
+                } catch (Exception ignored) {}
             }
         }
     }
 
     // ================= RECEIVE REPLICATED =================
-    public void markReplicated(Long id) {
-        Booking b = repository.findById(id).orElse(null);
+    public void markReplicated(String globalId) {
+        Booking b = repository.findByGlobalId(globalId);
+
         if (b != null) {
             b.setReplicated(true);
             repository.save(b);
-            logs.add(log("DATABASE", "Được đồng bộ replicated = TRUE"));
         }
     }
 
-    // ================= ABORT =================
-    private void sendAbort(RestTemplate rt, List<String> servers, Booking b) {
-        for (String url : servers) {
-            try {
-                rt.postForObject(url + "/api/abort", b, String.class);
-            } catch (Exception ignored) {}
-        }
+    // ================= PARTICIPANT =================
+    public boolean prepare(Booking b) {
+        updateClock(b.getLamportTime());
+        return true; // 🔥 luôn TRUE
     }
 
+    public String preCommit(Booking b) {
+        updateClock(b.getLamportTime());
+        return "PRE_ACK";
+    }
+
+    public void commit(Booking b) {
+        updateClock(b.getLamportTime());
+        saveOrUpdate(b); // 🔥 không tạo record mới
+    }
+
+    // ================= UTIL =================
     private RestTemplate createRestTemplate() {
         SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
         f.setConnectTimeout(3000);
@@ -255,26 +210,7 @@ public class BookingService {
         return new RestTemplate(f);
     }
 
-    // ================= PARTICIPANT =================
-    public boolean prepare(Booking b) {
-        updateClock(b.getLamportTime());
-        logs.add(log("4PC", "Nhận PREPARE"));
-        return true;
+    public List<String> getLogs() {
+        return logs;
     }
-
-    public String preCommit(Booking b) {
-        updateClock(b.getLamportTime());
-        logs.add(log("4PC", "Nhận PRE-COMMIT"));
-        return "PRE_ACK";
-    }
-
-    public void commit(Booking b) {
-        updateClock(b.getLamportTime());
-        repository.save(b);
-        logs.add(log("4PC", "COMMIT thành công"));
-    }
-
-    // ================= GET =================
-    public List<String> getLogs() { return logs; }
-    public ConcurrentHashMap<String, Boolean> getServerStatus() { return serverStatus; }
 }
