@@ -1,7 +1,6 @@
 package com.example.demo.model;
 
 import jakarta.persistence.*;
-import java.util.UUID;
 
 @Entity
 @Table(name = "bookings")
@@ -10,10 +9,6 @@ public class Booking {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
-
-    // 🔥 ID dùng để đồng bộ giữa các server
-    @Column(unique = true, nullable = false)
-    private String globalId;
 
     private String name;
     private String room;
@@ -29,7 +24,6 @@ public class Booking {
     public Booking() {}
 
     public Booking(String name, String room, String checkin, String checkout) {
-        this.globalId = UUID.randomUUID().toString(); // 🔥 tạo ID chung
         this.name = name;
         this.room = room;
         this.checkin = checkin;
@@ -45,10 +39,6 @@ public class Booking {
 
     public void setId(Long id) {
         this.id = id;
-    }
-
-    public String getGlobalId() {
-        return globalId;
     }
 
     public String getName() {
