@@ -1,4 +1,3 @@
-
 package com.example.demo.model;
 
 import jakarta.persistence.*;
@@ -15,24 +14,31 @@ public class Booking {
     private String room;
     private String checkin;
     private String checkout;
-    private boolean replicated;
+
+    @Column(nullable = false)
+    private boolean replicated = false; // ✅ mặc định FALSE
+
     private int lamportTime;
 
     // ===== Constructor =====
-    public Booking() {
-    }
+    public Booking() {}
 
-    public Booking(String name, String room, String checkin, String checkout, boolean replicated) {
+    public Booking(String name, String room, String checkin, String checkout) {
         this.name = name;
         this.room = room;
         this.checkin = checkin;
         this.checkout = checkout;
-        this.replicated = replicated;
+        this.replicated = false; // luôn false ban đầu
     }
 
     // ===== Getter & Setter =====
     public Long getId() {
         return id;
+    }
+
+    // ⚠️ thêm setter để update khi cần
+    public void setId(Long id) {
+        this.id = id;
     }
 
     public String getName() {
