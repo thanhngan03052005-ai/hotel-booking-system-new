@@ -51,10 +51,6 @@ public class Booking {
         return globalId;
     }
 
-    public void setGlobalId(String globalId) {
-        this.globalId = globalId;
-    }
-
     public String getName() {
         return name;
     }
