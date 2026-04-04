@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
+import java.util.Map;
+import java.util.HashMap;
 
 import java.time.LocalTime;
 import java.util.*;
