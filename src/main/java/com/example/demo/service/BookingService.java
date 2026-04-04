@@ -7,8 +7,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.scheduling.annotation.Scheduled;
-import java.util.Map;
-import java.util.HashMap;
 
 import java.time.LocalTime;
 import java.util.*;
@@ -203,7 +201,18 @@ public class BookingService {
         updateClock(b.getLamportTime());
         saveOrUpdate(b); // 🔥 không tạo record mới
     }
+public void abort(String globalId) {
+    Booking b = repository.findByGlobalId(globalId);
+    if (b == null) {
+        throw new RuntimeException("Booking không tồn tại: " + globalId);
+    }
 
+    // rollback hoặc đánh dấu aborted
+    logs.add("[4PC] ABORT transaction: " + globalId);
+    // nếu dùng Lamport / replicated → reset trạng thái
+    b.setReplicated(false);
+    repository.save(b);
+}
     // ================= UTIL =================
     private RestTemplate createRestTemplate() {
         SimpleClientHttpRequestFactory f = new SimpleClientHttpRequestFactory();
