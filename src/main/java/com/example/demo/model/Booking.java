@@ -16,7 +16,7 @@ public class Booking {
     private String checkout;
 
     @Column(nullable = false)
-    private boolean replicated = false;
+    private boolean replicated = false; // ✅ mặc định FALSE
 
     private int lamportTime;
 
@@ -28,15 +28,15 @@ public class Booking {
         this.room = room;
         this.checkin = checkin;
         this.checkout = checkout;
-        this.replicated = false;
+        this.replicated = false; // luôn false ban đầu
     }
 
     // ===== Getter & Setter =====
-
     public Long getId() {
         return id;
     }
 
+    // ⚠️ thêm setter để update khi cần
     public void setId(Long id) {
         this.id = id;
     }
