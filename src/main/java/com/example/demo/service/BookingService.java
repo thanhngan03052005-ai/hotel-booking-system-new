@@ -24,8 +24,8 @@ public class BookingService {
     private String[] otherServers = {
             "https://dien-toan-lan-hai.onrender.com",
             "https://dientoanck2.onrender.com",
-            "https://demo2-75m2.onrender.com",
-            "https://saythonginsomphone002.onrender.com"
+            "https://saythonginsomphone002.onrender.com",
+            "https://demo3-ieuy.onrender.com"
     };
 
     private ConcurrentHashMap<String, Boolean> serverStatus = new ConcurrentHashMap<>();
